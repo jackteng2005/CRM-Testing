@@ -1,0 +1,19 @@
+{
+  "name": "clarity",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Clean up your data and get a clear next step for your business.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "next": "^16.3.0",
+    "papaparse": "^5.4.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+.next/
+out/
+/AGENTS.md
+/CLAUDE.md
+.env*.local
+data/*.json
+!data/.gitkeep
+npm-debug.log*
+.DS_Store
