@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>当博弈论遇上爱情 EP1 · 先低头</title>
+<!--
+  每一帧都是时间 t 的纯函数 renderFrame(t)。
+  - 浏览器直接打开 = 预览（空格 播放/暂停，← → 跳 1 秒，Home 回到开头）
+  - node render.mjs     = 逐帧离屏渲染成无声 MP4 + SRT 字幕 + 分镜时间点
+-->
+<style>
+  html, body { margin: 0; background: #000; height: 100%; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; object-fit: contain; }
+  #hud { position: fixed; left: 12px; bottom: 10px; color: #888; font: 12px monospace; }
+  .render #hud { display: none; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<div id="hud"></div>
+<script>
+/* ============================================================
+ * 配置
+ * ============================================================ */
+const W = 1920, H = 1080, FPS = 30;
+const BURN_IN_SUBS = false;   // false：字幕交给剪映（导入 SRT）；true：直接烧进画面
+const FONT_SERIF = '"Noto Serif SC","Source Han Serif SC","Songti SC","STSong","SimSun",serif';
+const FONT_SANS  = '"Noto Sans SC","Source Han Sans SC","PingFang SC","Microsoft YaHei","WenQuanYi Zen Hei",sans-serif';
+const FONT_MONO  = '"JetBrains Mono","SF Mono",Consolas,"WenQuanYi Zen Hei Mono",monospace';
+// 金 = 合作 / 低头（暖）；蓝 = 背叛 / 冷战（冷）；红 = 气话那一下
+const PALETTE = { bg: '#07080c', ink: '#f2efe8', dim: '#7d7a73', gold: '#e8b45a', blue: '#5aa9e8', red: '#e06a5a' };
+
+/* ============================================================
+ * 数据：两个「一报还一报」真跑 100 回合（字幕里的数字全部来自这里）
+ * 刑期取常见教学版本：都不招 1/1，一人招供 0/10，都招供 5/5
+ * ============================================================ */
+const YEARS = { CC: [1, 1], CD: [10, 0], DC: [0, 10], DD: [5, 5] };   // [A 的刑期, B 的刑期]
+const ROUNDS = 100, FIGHT_AT = 8, BOW_AT = 20;
+function simulate({ bowAt = null } = {}) {
+  const A = [], B = [], cumA = [0], cumB = [0];
+  for (let r = 1; r <= ROUNDS; r++) {
+    // 一报还一报：第一回合合作，之后学对方上一步
+    let a = r === 1 ? 'C' : B[r - 2], b = r === 1 ? 'C' : A[r - 2];
+    if (r === FIGHT_AT) a = b = 'D';                               // 第 8 回合：两人同时说了气话
+    if (bowAt && (r === bowAt || r === bowAt + 1)) a = 'C';        // A 先低头，下一回合再接住对方的回敬
+    A.push(a); B.push(b);
+    const [ya, yb] = YEARS[a + b];
+    cumA.push(cumA[r - 1] + ya); cumB.push(cumB[r - 1] + yb);
+  }
+  return { A, B, cumA, cumB };
+}
+const LOCK = simulate();                     // 一直学对方：472 / 472
+const BREAK = simulate({ bowAt: BOW_AT });   // 第 20 回合先低头：157 / 147
+const BOW_COST = YEARS.CD[0];                // 低头那一回合独自判 10 年
+
+/* ============================================================
+ * ① 字幕
+ * ============================================================ */
+const SUBS = [
+  // 钩子
+  { start: 0.8,   end: 3.8,   zh: '吵完架，谁都不说话。', en: 'After the fight, neither of you speaks.' },
+  { start: 4.3,   end: 8.6,   zh: '你在等对方先开口，对方也在等你。', en: 'You wait for them to speak. They wait for you.' },
+  // 引子
+  { start: 9.9,   end: 13.3,  zh: '1950 年，兰德公司的两位研究者', en: 'In 1950, two researchers at RAND' },
+  { start: 13.7,  end: 16.8,  zh: '写下了一个让人不安的游戏。', en: 'wrote down an unsettling game.' },
+  { start: 17.2,  end: 20.6,  zh: '同年，数学家塔克给它讲了个故事。', en: 'That year, mathematician Albert Tucker gave it a story.' },
+  { start: 21.2,  end: 24.2,  zh: '两个嫌犯，被分开审问。', en: 'Two suspects, questioned apart.' },
+  { start: 24.6,  end: 27.6,  zh: '都不招：各判 1 年。', en: 'Neither talks: 1 year each.' },
+  { start: 28.0,  end: 32.0,  zh: '一人招供：他释放，对方 10 年。', en: 'One confesses: he walks free, the other gets 10.' },
+  { start: 32.4,  end: 35.6,  zh: '都招供：各判 5 年。', en: 'Both confess: 5 years each.' },
+  // 推演 · 一次性
+  { start: 38.2,  end: 42.0,  zh: '不管对方怎么选，招供都更“划算”。', en: 'Whatever the other does, confessing pays better.' },
+  { start: 42.4,  end: 45.8,  zh: '于是两个聪明人，都招了供。', en: 'So two clever people both confess.' },
+  { start: 46.2,  end: 49.6,  zh: '各判 5 年，比都不招多了 4 年。', en: '5 years each. 4 more than staying silent.' },
+  { start: 50.0,  end: 53.2,  zh: '每个人都算对了，', en: 'Each of them calculated right,' },
+  { start: 53.6,  end: 57.2,  zh: '结果却落在了最差的那一格。', en: 'and still landed in the worst square.' },
+  { start: 58.4,  end: 61.6,  zh: '可两个人的冷战，不是一局。', en: 'But a cold war between two people is not one round.' },
+  { start: 62.0,  end: 65.8,  zh: '明天还要见面，后天也是。', en: 'You will meet tomorrow. And the day after.' },
+  // 推演 · 重复博弈
+  { start: 66.8,  end: 70.0,  zh: '1980 年，政治学家阿克塞尔罗德', en: 'In 1980, political scientist Robert Axelrod' },
+  { start: 70.4,  end: 73.8,  zh: '公布了一场重复博弈比赛的结果。', en: 'published the results of a repeated-game tournament.' },
+  { start: 74.2,  end: 77.6,  zh: '赢家是最短的程序：一报还一报。', en: 'The winner was the shortest program: Tit for Tat.' },
+  { start: 78.0,  end: 82.0,  zh: '第一回合合作，之后学对方上一步。', en: 'Cooperate first. Then copy their last move.' },
+  { start: 83.4,  end: 87.0,  zh: '我们让两个“一报还一报”过 100 回合。', en: 'We let two Tit for Tats play 100 rounds.' },
+  { start: 87.4,  end: 90.4,  zh: `前 ${FIGHT_AT - 1} 回合，相安无事。`, en: `For ${FIGHT_AT - 1} rounds, all is calm.` },
+  { start: 90.8,  end: 94.4,  zh: `第 ${FIGHT_AT} 回合，两人同时说了句气话。`, en: `Round ${FIGHT_AT}: both snap at the same time.` },
+  { start: 94.8,  end: 98.4,  zh: '从此，每个人都只是在学对方。', en: 'From then on, each just copies the other.' },
+  { start: 98.8,  end: 103.0, zh: '跑完 100 回合，冷战没有结束。', en: 'After 100 rounds, the cold war never ends.' },
+  { start: 103.4, end: 108.0, zh: `两个人，各判了 ${LOCK.cumA[ROUNDS]} 年。`, en: `Each of them: ${LOCK.cumA[ROUNDS]} years.` },
+  // 反转
+  { start: 113.2, end: 116.6, zh: '能打破它的，只有一种走法：', en: 'Only one move can break it:' },
+  { start: 117.0, end: 120.2, zh: '有一个人，先不学了。', en: 'Someone stops copying.' },
+  { start: 120.6, end: 124.0, zh: `第 ${BOW_AT} 回合，他先低了头。`, en: `Round ${BOW_AT}: one of them bows first.` },
+  { start: 124.4, end: 128.4, zh: '对方还回了一句冷的——他接住了。', en: 'The other answers coldly. He takes it.' },
+  { start: 128.8, end: 132.0, zh: '然后，冷战结束了。', en: 'And then, the cold war is over.' },
+  { start: 132.4, end: 136.4, zh: `先低头的人，那一回合判了 ${BOW_COST} 年。`, en: `The one who bowed took ${BOW_COST} years that round.` },
+  { start: 136.8, end: 140.8, zh: `可 100 回合下来，只判了 ${BREAK.cumA[ROUNDS]} 年。`, en: `But over 100 rounds, only ${BREAK.cumA[ROUNDS]}.` },
+  // 落点
+  { start: 141.6, end: 145.0, zh: '先低头，不是认输。', en: 'Bowing first is not losing.' },
+  { start: 145.4, end: 149.6, zh: '是看见了明天，还要见面。', en: 'It is seeing that tomorrow, you will meet again.' },
+  { start: 150.4, end: 155.6, zh: '致每一个，还在等对方开口的人。', en: 'To everyone still waiting for the other to speak.' },
+];
+
+/* ============================================================
+ * ② 镜头
+ * ============================================================ */
+const MX = W / 2, MY = 470, CW = 340, CH = 150;            // 收益矩阵中心与格子尺寸
+const CELLS = [                                             // [行=A, 列=B, 刑期键, 出现时间]
+  [0, 0, 'CC', 24.6], [0, 1, 'CD', 28.0], [1, 0, 'DC', 28.0], [1, 1, 'DD', 32.4],
+];
+
+const SHOTS = [
+  { // 1 钩子：两个人各在一边，中间的线断开
+    start: 0, end: 9.5,
+    draw(ctx, p, t, local) {
+      const a = fade(local, 0.2, 1.4) * (1 - fade(local, 8.7, 9.5));
+      const breathe = 1 + 0.15 * Math.sin(t * 1.6);
+      ctx.save(); ctx.globalAlpha = a * 0.5; ctx.strokeStyle = PALETTE.blue; ctx.lineWidth = 1.5;
+      const gap = 90 + 40 * ease(fade(local, 1.0, 6.0));
+      line(ctx, 560, MY, MX - gap, MY); line(ctx, MX + gap, MY, 1360, MY);
+      ctx.restore();
+      glowDot(ctx, 540, MY, 9 * breathe, PALETTE.blue, a);
+      glowDot(ctx, 1380, MY, 9 * breathe, PALETTE.blue, a);
+      text(ctx, '你', 540, MY + 60, 30, PALETTE.dim, a * fade(local, 4.3, 5.3), FONT_SANS, 6);
+      text(ctx, 'TA', 1380, MY + 60, 30, PALETTE.dim, a * fade(local, 5.0, 6.0), FONT_SANS, 6);
+    },
+  },
+  { // 2 引子：1950，兰德公司 → 塔克 → 「囚徒困境」砸出
+    start: 9.5, end: 21.0,
+    draw(ctx, p, t, local) {
+      const a = fade(local, 0, 0.6) * (1 - fade(local, 10.8, 11.5));
+      const a1 = a * (1 - fade(local, 7.2, 7.8));
+      text(ctx, '1950', MX, 380, 150, PALETTE.ink, a1 * fade(local, 0.3, 1.5), FONT_SERIF, 20);
+      text(ctx, 'RAND CORPORATION', MX, 500, 26, PALETTE.dim, a1 * fade(local, 1.0, 2.0), FONT_SANS, 14);
+      text(ctx, 'Merrill Flood  ·  Melvin Dresher', MX, 550, 28, PALETTE.dim, a1 * fade(local, 1.6, 2.6), FONT_SANS, 2);
+      // 「囚徒困境」：从大到正常尺寸「砸」进来
+      const k = fade(local, 8.6, 9.0);
+      if (k > 0) {
+        const s = 1 + 0.6 * (1 - ease(k));
+        ctx.save(); ctx.translate(MX, 430); ctx.scale(s, s);
+        text(ctx, '囚徒困境', 0, 0, 132, PALETTE.ink, a * k, FONT_SERIF, 24);
+        ctx.restore();
+        text(ctx, "THE PRISONER'S DILEMMA  ·  Albert Tucker", MX, 560, 24, PALETTE.dim, a * fade(local, 9.2, 10.0), FONT_SANS, 8);
+      }
+    },
+  },
+  { // 3 收益矩阵逐格亮起
+    start: 21.0, end: 38.0,
+    draw(ctx, p, t, local) {
+      const a = fade(local, 0, 0.8);
+      drawMatrix(ctx, t, a, {});
+      footnote(ctx, '* 常见教学版本，刑期数字因教材而异', a * fade(local, 12.0, 13.0));
+    },
+  },
+  { // 4 优势策略：箭头都指向「招供」，落在最差的那一格
+    start: 38.0, end: 58.0,
+    draw(ctx, p, t, local) {
+      const a = 1 - fade(local, 19.2, 20.0);
+      const arrows = fade(local, 0.6, 3.0);
+      const both = fade(local, 4.4, 5.4);
+      drawMatrix(ctx, t, a, { arrows, both, plus4: fade(local, 8.6, 9.6), worst: fade(local, 15.6, 16.6) });
+    },
+  },
+  { // 5 不是一局：矩阵缩小，一排「明天」延伸到远方
+    start: 58.0, end: 66.5,
+    draw(ctx, p, t, local) {
+      const a = fade(local, 0, 0.6) * (1 - fade(local, 7.8, 8.5));
+      const n = Math.floor(60 * ease(fade(local, 0.6, 7.0)));
+      for (let i = 0; i < n; i++) {
+        const x = 260 + i * 24 * Math.pow(0.985, i), r = 7 * Math.pow(0.97, i);
+        glowDot(ctx, x, MY, r, PALETTE.blue, a * Math.pow(0.975, i));
+      }
+      text(ctx, '第 1 局', 260, MY - 60, 26, PALETTE.dim, a * fade(local, 0.6, 1.4), FONT_SANS, 4);
+      text(ctx, '明天', 260 + 8 * 24 * Math.pow(0.985, 8), MY + 60, 26, PALETTE.dim, a * fade(local, 4.0, 5.0), FONT_SANS, 4);
+      text(ctx, '后天', 260 + 16 * 24 * Math.pow(0.985, 16), MY + 60, 26, PALETTE.dim, a * fade(local, 5.0, 6.0), FONT_SANS, 4);
+    },
+  },
+  { // 6 1980 · 阿克塞尔罗德 · 一报还一报（4 行代码逐字打出）
+    start: 66.5, end: 83.0,
+    draw(ctx, p, t, local) {
+      const a = fade(local, 0, 0.6) * (1 - fade(local, 15.8, 16.5));
+      text(ctx, '1980', MX, 250, 110, PALETTE.ink, a * fade(local, 0.3, 1.3), FONT_SERIF, 16);
+      text(ctx, 'Robert Axelrod', MX, 340, 30, PALETTE.dim, a * fade(local, 0.8, 1.8), FONT_SANS, 4);
+      const code = [
+        'function titForTat(history) {',
+        "  if (history.length === 0) return 'C';   // 第一回合：合作",
+        '  return history.at(-1).opponent;         // 之后：学对方上一步',
+        '}',
+      ];
+      const total = code.join('').length;
+      const shown = Math.floor(total * fade(local, 7.6, 13.5));
+      let used = 0;
+      code.forEach((ln, i) => {
+        const s = ln.slice(0, Math.max(0, shown - used)); used += ln.length;
+        textL(ctx, s, 520, 480 + i * 56, 30, i === 2 ? PALETTE.gold : PALETTE.ink, a * fade(local, 7.4, 8.0), FONT_MONO);
+      });
+      if (shown < total && Math.floor(t * 2) % 2 === 0) {      // 光标闪烁
+        const row = code.findIndex((_, i) => code.slice(0, i + 1).join('').length >= shown);
+        ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = PALETTE.gold;
+        ctx.font = `30px ${FONT_MONO}`;
+        const before = code.slice(0, row).join('').length;
+        const w = ctx.measureText(code[row].slice(0, shown - before)).width;
+        ctx.fillRect(520 + w + 4, 480 + row * 56 - 16, 14, 32); ctx.restore();
+      }
+      footnote(ctx, '* 后续复现研究认为，这一结果依赖比赛设置（Rapoport et al., 2015；Knight et al., 2026）', a * fade(local, 9.0, 10.0));
+    },
+  },
+  { // 7 真跑：两个一报还一报，第 8 回合吵了一架，然后再也没停下
+    start: 83.0, end: 113.0,
+    draw(ctx, p, t, local) {
+      const a = fade(local, 0, 0.6) * (1 - fade(local, 29.2, 30.0));
+      const upto = Math.floor(keyframes(t, [[83.8, 0], [87.4, 1], [90.4, FIGHT_AT - 1], [91.2, FIGHT_AT], [94.8, FIGHT_AT + 1], [103.0, ROUNDS]]));
+      drawRounds(ctx, LOCK, upto, 470, a, t, {});
+      text(ctx, `第 ${upto} 回合`, MX, 260, 34, PALETTE.ink, a * fade(local, 0.8, 1.4), FONT_SANS, 6);
+      counter(ctx, LOCK, upto, 470, a * fade(local, 0.8, 1.4), fade(t, 103.4, 104.2));
+    },
+  },
+  { // 8 反转：同一场冷战，第 20 回合有人先低头
+    start: 113.0, end: 141.0,
+    draw(ctx, p, t, local) {
+      const a = fade(local, 0, 0.8) * (1 - fade(local, 27.2, 28.0));
+      // 上：一直学对方（虚化做对照）；下：先低头
+      drawRounds(ctx, LOCK, ROUNDS, 330, a * 0.35, t, { small: true });
+      text(ctx, '一直学对方', 160, 290, 24, PALETTE.dim, a * 0.8, FONT_SANS, 4, 'left');
+      counter(ctx, LOCK, ROUNDS, 330, a * 0.5, 1, true);
+      const upto = Math.floor(keyframes(t, [[113.0, BOW_AT - 1], [120.6, BOW_AT - 1], [121.6, BOW_AT], [124.4, BOW_AT], [125.4, BOW_AT + 1], [128.8, BOW_AT + 1], [136.8, ROUNDS]]));
+      drawRounds(ctx, BREAK, upto, 600, a, t, { bow: true });
+      text(ctx, '有一个人先低头', 160, 560, 24, PALETTE.gold, a * fade(local, 4.0, 5.0), FONT_SANS, 4, 'left');
+      counter(ctx, BREAK, upto, 600, a, fade(t, 136.8, 137.6));
+      // 低头那一回合：+10 年
+      const bx = roundX(BOW_AT);
+      text(ctx, `+${BOW_COST} 年`, bx, 540, 30, PALETTE.gold, a * fade(t, 132.4, 133.0) * (1 - fade(t, 136.4, 137.0)), FONT_SANS);
+    },
+  },
+  { // 9 落点：两个光点重新连上，冷色转暖
+    start: 141.0, end: 164.0,
+    draw(ctx, p, t, local) {
+      const a = fade(local, 0, 1.0) * (1 - fade(local, 20.5, 23.0));
+      const join = ease(fade(local, 0.6, 6.0));
+      ctx.save(); ctx.globalAlpha = a * 0.8; ctx.strokeStyle = PALETTE.gold; ctx.lineWidth = 2;
+      line(ctx, 540, MY, 540 + (MX - 540) * join, MY); line(ctx, 1380, MY, 1380 - (1380 - MX) * join, MY);
+      ctx.restore();
+      glowDot(ctx, 540, MY, 10, PALETTE.gold, a);
+      glowDot(ctx, 1380, MY, 10, PALETTE.gold, a);
+      if (join >= 1) glowDot(ctx, MX, MY, 6 + 3 * Math.sin(t * 2), PALETTE.gold, a * fade(local, 6.0, 7.0));
+      text(ctx, '先低头的人，不是输了', MX, 280, 64, PALETTE.ink, a * fade(local, 8.0, 9.4), FONT_SERIF, 8);
+      text(ctx, '是看得更远', MX, 380, 64, PALETTE.gold, a * fade(local, 9.0, 10.4), FONT_SERIF, 8);
+      footnote(ctx, '* 博弈论在这里是一种类比和视角，不是定理', a * fade(local, 10.0, 11.0));
+    },
+  },
+];
+
+/* ---------- 本片专用绘图 ---------- */
+function cellXY(row, col) { return [MX + (col - 0.5) * CW, MY + (row - 0.5) * CH]; }
+function drawMatrix(ctx, t, a, { arrows = 0, both = 0, plus4 = 0, worst = 0 }) {
+  if (a <= 0) return;
+  text(ctx, '嫌犯 B', MX, MY - CH - 70, 28, PALETTE.dim, a, FONT_SANS, 4);
+  text(ctx, '不招', MX - CW / 2, MY - CH - 25, 28, PALETTE.ink, a, FONT_SANS, 4);
+  text(ctx, '招供', MX + CW / 2, MY - CH - 25, 28, PALETTE.ink, a, FONT_SANS, 4);
+  text(ctx, '嫌犯 A', MX - CW - 170, MY, 28, PALETTE.dim, a, FONT_SANS, 4);
+  text(ctx, '不招', MX - CW - 50, MY - CH / 2, 28, PALETTE.ink, a, FONT_SANS, 4);
+  text(ctx, '招供', MX - CW - 50, MY + CH / 2, 28, PALETTE.ink, a, FONT_SANS, 4);
+  for (const [row, col, key, appear] of CELLS) {
+    const [x, y] = cellXY(row, col);
+    const k = fade(t, appear, appear + 0.5);
+    const isDD = key === 'DD';
+    ctx.save(); ctx.globalAlpha = a;
+    ctx.strokeStyle = 'rgba(242,239,232,0.25)'; ctx.lineWidth = 1;
+    ctx.strokeRect(x - CW / 2, y - CH / 2, CW, CH);
+    if (isDD && both > 0) {                                  // 两人都招供：这一格变冷
+      ctx.globalAlpha = a * both * (0.18 + 0.1 * worst * (0.5 + 0.5 * Math.sin(t * 5)));
+      ctx.fillStyle = PALETTE.blue; ctx.fillRect(x - CW / 2, y - CH / 2, CW, CH);
+    }
+    if (key === 'CC' && plus4 > 0) {                         // 都不招才是更好的那一格
+      ctx.globalAlpha = a * plus4; ctx.strokeStyle = PALETTE.gold; ctx.setLineDash([8, 8]); ctx.lineWidth = 2;
+      ctx.strokeRect(x - CW / 2 + 6, y - CH / 2 + 6, CW - 12, CH - 12);
+    }
+    ctx.restore();
+    // 数字卡点弹出
+    const pop = 1 + 0.35 * (1 - ease(k));
+    const [ya, yb] = YEARS[key];
+    ctx.save(); ctx.translate(x, y); ctx.scale(pop, pop);
+    text(ctx, ya === 0 ? '释放' : `${ya} 年`, -70, 0, 40, PALETTE.ink, a * k, FONT_SERIF);
+    text(ctx, yb === 0 ? '释放' : `${yb} 年`, 70, 0, 40, PALETTE.dim, a * k, FONT_SERIF);
+    ctx.restore();
+  }
+  if (plus4 > 0) {
+    const [x, y] = cellXY(1, 1);
+    text(ctx, '各多 4 年', x + CW / 2 + 110, y, 30, PALETTE.blue, a * plus4, FONT_SANS, 2);
+  }
+  if (arrows > 0) {
+    ctx.save(); ctx.globalAlpha = a * arrows; ctx.strokeStyle = PALETTE.blue; ctx.fillStyle = PALETTE.blue; ctx.lineWidth = 2;
+    for (const col of [0, 1]) {                              // A：每一列都从「不招」指向「招供」
+      const [x, y0] = cellXY(0, col), [, y1] = cellXY(1, col);
+      arrow(ctx, x - CW / 2 + 30, y0 + 30, x - CW / 2 + 30, y1 - 30, arrows);
+    }
+    for (const row of [0, 1]) {                              // B：每一行都从「不招」指向「招供」
+      const [x0, y] = cellXY(row, 0), [x1] = cellXY(row, 1);
+      arrow(ctx, x0 + 60, y + CH / 2 - 22, x1 - 60, y + CH / 2 - 22, arrows);
+    }
+    ctx.restore();
+  }
+}
+const RX0 = 180, RX1 = 1600;
+function roundX(r) { return RX0 + (RX1 - RX0) * (r - 1) / (ROUNDS - 1); }
+function drawRounds(ctx, sim, upto, y, a, t, { small = false, bow = false }) {
+  if (a <= 0) return;
+  const gap = small ? 34 : 60, r = small ? 3.5 : 5;
+  for (let i = 1; i <= upto; i++) {
+    const x = roundX(i), fresh = i === upto ? 1 + 0.6 * Math.max(0, Math.sin(t * 8)) : 1;
+    for (const [moves, yy] of [[sim.A, y], [sim.B, y + gap]]) {
+      const c = moves[i - 1] === 'C' ? PALETTE.gold : PALETTE.blue;
+      ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = c;
+      ctx.beginPath(); ctx.arc(x, yy, r * (small ? 1 : fresh), 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    }
+    if (i === FIGHT_AT && !small) {                          // 气话那一回合：红圈
+      ctx.save(); ctx.globalAlpha = a * 0.9; ctx.strokeStyle = PALETTE.red; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.ellipse(x, y + gap / 2, 14, gap / 2 + 18, 0, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+    }
+    if (bow && (i === BOW_AT || i === BOW_AT + 1)) {          // 先低头 + 接住：金色光晕
+      glowDot(ctx, x, y, 8, PALETTE.gold, a);
+    }
+  }
+  text(ctx, 'A', RX0 - 50, y, 24, PALETTE.dim, a, FONT_SANS);
+  text(ctx, 'B', RX0 - 50, y + gap, 24, PALETTE.dim, a, FONT_SANS);
+}
+function counter(ctx, sim, upto, y, a, emphasis, small = false) {
+  if (a <= 0) return;
+  const size = small ? 26 : 34 + 14 * emphasis;
+  const color = sim === BREAK ? PALETTE.gold : PALETTE.blue;
+  textL(ctx, `${sim.cumA[upto]} 年`, RX1 + 50, y, size, color, a, FONT_SANS);
+  textL(ctx, `${sim.cumB[upto]} 年`, RX1 + 50, y + (small ? 34 : 60), size, color, a, FONT_SANS);
+}
+function keyframes(t, frames) {                              // 分段线性插值
+  if (t <= frames[0][0]) return frames[0][1];
+  for (let i = 1; i < frames.length; i++) {
+    const [t0, v0] = frames[i - 1], [t1, v1] = frames[i];
+    if (t <= t1) return v0 + (v1 - v0) * (t - t0) / (t1 - t0);
+  }
+  return frames[frames.length - 1][1];
+}
+function footnote(ctx, s, a) { text(ctx, s, MX, 880, 22, PALETTE.dim, a * 0.8, FONT_SANS, 1); }
+
+/* ============================================================
+ * 引擎（一般不用改）
+ * ============================================================ */
+const DURATION = Math.max(...SHOTS.map(s => s.end));
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+function clamp(x, a = 0, b = 1) { return Math.min(b, Math.max(a, x)); }
+function fade(x, a, b) { return clamp((x - a) / (b - a)); }               // a→b 之间 0→1
+function ease(x) { return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; }
+function rng(seed) {                                                        // 确定性随机数：同一帧永远同一结果
+  return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let r = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    r = r + Math.imul(r ^ r >>> 7, 61 | r) ^ r; return ((r ^ r >>> 14) >>> 0) / 4294967296; };
+}
+function text(ctx, s, x, y, size, color, alpha = 1, font = FONT_SANS, spacing = 0, align = 'center') {
+  if (alpha <= 0) return;
+  ctx.save(); ctx.globalAlpha = alpha; ctx.fillStyle = color;
+  ctx.font = `${size}px ${font}`; ctx.textAlign = align; ctx.textBaseline = 'middle';
+  if ('letterSpacing' in ctx) ctx.letterSpacing = `${spacing}px`;
+  ctx.fillText(s, x, y); ctx.restore();
+}
+function textL(ctx, s, x, y, size, color, alpha = 1, font = FONT_SANS) { text(ctx, s, x, y, size, color, alpha, font, 0, 'left'); }
+function line(ctx, x0, y0, x1, y1) { ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke(); }
+function arrow(ctx, x0, y0, x1, y1, k = 1) {                               // k：箭头生长进度 0→1
+  const x = x0 + (x1 - x0) * k, y = y0 + (y1 - y0) * k, ang = Math.atan2(y1 - y0, x1 - x0);
+  line(ctx, x0, y0, x, y);
+  ctx.beginPath(); ctx.moveTo(x, y);
+  ctx.lineTo(x - 14 * Math.cos(ang - 0.4), y - 14 * Math.sin(ang - 0.4));
+  ctx.lineTo(x - 14 * Math.cos(ang + 0.4), y - 14 * Math.sin(ang + 0.4));
+  ctx.closePath(); ctx.fill();
+}
+function glowDot(ctx, x, y, r, color, alpha = 1) {
+  if (alpha <= 0) return;
+  ctx.save(); ctx.globalAlpha = alpha; ctx.shadowColor = color; ctx.shadowBlur = r * 6;
+  ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+}
+function drawSubtitle(t) {
+  const s = SUBS.find(s => t >= s.start && t < s.end);
+  if (!s) return;
+  const a = fade(t, s.start, s.start + 0.25) * (1 - fade(t, s.end - 0.25, s.end));
+  text(ctx, s.zh, W / 2, H - 120, 44, PALETTE.ink, a, FONT_SANS, 2);
+  text(ctx, s.en, W / 2, H - 66, 24, PALETTE.dim, a, FONT_SANS);
+}
+function background(t) {                                                    // 冷 → 暖：低头那一刻（≈121s）开始回暖
+  const warm = ease(fade(t, 121.0, 132.0));
+  const g = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, H);
+  g.addColorStop(0, warm > 0 ? `rgba(${Math.round(20 + 22 * warm)},${Math.round(22 + 8 * warm)},${Math.round(34 - 18 * warm)},1)` : 'rgb(20,22,34)');
+  g.addColorStop(1, PALETTE.bg);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+function filmLook(t) {                                                       // 暗角 + 胶片颗粒，统一“电影感”
+  const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.9);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.65)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  const r = rng(Math.floor(t * FPS) + 1);
+  ctx.fillStyle = 'rgba(255,255,255,0.035)';
+  for (let i = 0; i < 1400; i++) ctx.fillRect(r() * W, r() * H, 1.5, 1.5);
+}
+function renderFrame(t) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1; background(t);
+  for (const s of SHOTS) if (t >= s.start && t < s.end) s.draw(ctx, fade(t, s.start, s.end), t, t - s.start);
+  if (BURN_IN_SUBS) drawSubtitle(t);
+  filmLook(t);
+}
+
+// 供 render.mjs 调用
+window.__vibe = { W, H, FPS, DURATION, SUBS, SHOTS: SHOTS.map(({ start, end }) => ({ start, end })), renderFrame };
+
+// 预览模式
+if (new URLSearchParams(location.search).has('render')) {
+  document.body.classList.add('render');
+  renderFrame(0);
+} else {
+  const hud = document.getElementById('hud');
+  let playing = true, t = 0, last = performance.now();
+  addEventListener('keydown', e => {
+    if (e.code === 'Space') playing = !playing;
+    if (e.code === 'ArrowRight') t = Math.min(DURATION, t + 1);
+    if (e.code === 'ArrowLeft') t = Math.max(0, t - 1);
+    if (e.code === 'Home') t = 0;
+  });
+  (function loop(now) {
+    if (playing) t += (now - last) / 1000;
+    if (t >= DURATION) t = 0;
+    last = now;
+    renderFrame(t); if (!BURN_IN_SUBS) drawSubtitle(t);  // 预览时总是显示字幕方便对稿
+    hud.textContent = `${t.toFixed(2)}s / ${DURATION}s   [空格] 播放/暂停  [← →] ±1s`;
+    requestAnimationFrame(loop);
+  })(performance.now());
+}
+</script>
+</body>
+</html>
