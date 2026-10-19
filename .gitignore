@@ -8,3 +8,6 @@ data/*.json
 !data/.gitkeep
 npm-debug.log*
 .DS_Store
+
+# vibe-knowledge-video render output
+vibe-knowledge-video/**/out/

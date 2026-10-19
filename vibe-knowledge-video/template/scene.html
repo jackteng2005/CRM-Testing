@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Vibe 知识大赏 · 场景模板</title>
+<!--
+  这是「代码即画面」模板：每一帧都是时间 t 的纯函数 renderFrame(t)。
+  - 浏览器直接打开 = 预览（空格 播放/暂停，← → 跳 1 秒，Home 回到开头）
+  - node render.mjs     = 逐帧离屏渲染成无声 MP4 + SRT 字幕 + 分镜时间点
+  让 Claude 改这个文件时，只需要改下面「① 字幕」和「② 镜头」两块，引擎部分不要动。
+-->
+<style>
+  html, body { margin: 0; background: #000; height: 100%; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; object-fit: contain; }
+  #hud { position: fixed; left: 12px; bottom: 10px; color: #888; font: 12px monospace; }
+  .render #hud { display: none; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<div id="hud"></div>
+<script>
+/* ============================================================
+ * 配置
+ * ============================================================ */
+const W = 1920, H = 1080, FPS = 30;
+const BURN_IN_SUBS = false;   // false：字幕交给剪映（导入 SRT）；true：直接烧进画面
+const FONT_SERIF = '"Noto Serif SC","Source Han Serif SC","Songti SC","STSong","SimSun",serif';
+const FONT_SANS  = '"Noto Sans SC","Source Han Sans SC","PingFang SC","Microsoft YaHei","WenQuanYi Zen Hei",sans-serif';
+const PALETTE = { bg: '#07080c', ink: '#f2efe8', dim: '#7d7a73', gold: '#e8b45a', blue: '#5aa9e8', red: '#e06a5a' };
+
+/* ============================================================
+ * ① 字幕：中文 + 英文双语，时间单位秒。render.mjs 会导出为 subtitles.srt
+ *    （示例主题：《一点点》1.01 的 365 次方）
+ * ============================================================ */
+const SUBS = [
+  { start: 0.6,  end: 4.2,  zh: '每天只进步一点点，有用吗？', en: 'Does getting a little better each day matter?' },
+  { start: 4.6,  end: 9.0,  zh: '1.01，和 1，只差了 0.01。',   en: '1.01 and 1 differ by only 0.01.' },
+  { start: 9.4,  end: 14.5, zh: '可乘上 365 天，它会变成 37.8。', en: 'Multiplied over 365 days, it becomes 37.8.' },
+  { start: 14.9, end: 19.5, zh: '而 0.99 的 365 次方，只剩 0.03。', en: '0.99 to the 365th leaves just 0.03.' },
+  { start: 20.0, end: 25.5, zh: '差距不在某一天，在每一天。',     en: 'The gap is not in one day. It is in every day.' },
+];
+
+/* ============================================================
+ * ② 镜头：每个镜头 { start, end, draw(ctx, p, t, local) }
+ *    p = 镜头内进度 0→1，t = 全局秒，local = 镜头内秒
+ * ============================================================ */
+const SHOTS = [
+  { // 镜头 1：标题 —— 黑场里亮起一个点，标题浮现
+    start: 0, end: 4.4,
+    draw(ctx, p, t, local) {
+      const a = fade(local, 0.2, 1.2) * (1 - fade(local, 3.6, 4.4));
+      glowDot(ctx, W / 2, H / 2 - 40, 6 + 4 * Math.sin(t * 3), PALETTE.gold, a);
+      text(ctx, '一点点', W / 2, H / 2 + 80, 96, PALETTE.ink, a * fade(local, 0.8, 2.0), FONT_SERIF, 24);
+      text(ctx, 'A LITTLE BIT', W / 2, H / 2 + 150, 22, PALETTE.dim, a * fade(local, 1.2, 2.4), FONT_SANS, 12);
+    },
+  },
+  { // 镜头 2：两个数字并排，0.01 的差被放大
+    start: 4.4, end: 9.2,
+    draw(ctx, p, t, local) {
+      const a = fade(local, 0, 0.6) * (1 - fade(local, 4.2, 4.8));
+      text(ctx, '1.00', W / 2 - 300, H / 2, 160, PALETTE.dim, a, FONT_SERIF);
+      text(ctx, '1.01', W / 2 + 300, H / 2, 160, PALETTE.gold, a, FONT_SERIF);
+      const k = ease(fade(local, 1.4, 3.0));
+      ctx.globalAlpha = a; ctx.strokeStyle = PALETTE.gold; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(W / 2 + 150, H / 2 + 110); ctx.lineTo(W / 2 + 150 + 300 * k, H / 2 + 110); ctx.stroke();
+      text(ctx, '+0.01', W / 2 + 300, H / 2 + 170, 40, PALETTE.gold, a * k, FONT_SANS);
+      ctx.globalAlpha = 1;
+    },
+  },
+  { // 镜头 3：365 天的曲线——两条指数线分道扬镳（数据是真算出来的）
+    start: 9.2, end: 20.0,
+    draw(ctx, p, t, local) {
+      const a = fade(local, 0, 0.6) * (1 - fade(local, 10.2, 10.8));
+      const x0 = 260, x1 = W - 260, yBase = H - 220, yTop = 180;
+      const days = Math.floor(365 * ease(fade(local, 0.4, 8.0)));
+      const yOf = v => yBase - (Math.log(v) - Math.log(0.02)) / (Math.log(40) - Math.log(0.02)) * (yBase - yTop);
+      ctx.globalAlpha = a * 0.3; ctx.strokeStyle = PALETTE.dim; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, yOf(1)); ctx.lineTo(x1, yOf(1)); ctx.stroke();
+      for (const [base, color] of [[1.01, PALETTE.gold], [0.99, PALETTE.blue]]) {
+        ctx.globalAlpha = a; ctx.strokeStyle = color; ctx.lineWidth = 4;
+        ctx.beginPath();
+        for (let d = 0; d <= days; d++) {
+          const x = x0 + (x1 - x0) * d / 365, y = yOf(Math.pow(base, d));
+          d === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        const v = Math.pow(base, days);
+        glowDot(ctx, x0 + (x1 - x0) * days / 365, yOf(v), 7, color, a);
+        text(ctx, v.toFixed(2), x0 + (x1 - x0) * days / 365 + 70, yOf(v), 36, color, a, FONT_SANS);
+      }
+      text(ctx, `第 ${days} 天`, W / 2, 110, 34, PALETTE.ink, a, FONT_SANS, 6);
+      ctx.globalAlpha = 1;
+    },
+  },
+  { // 镜头 4：结尾金句 + 落点
+    start: 20.0, end: 27.0,
+    draw(ctx, p, t, local) {
+      const a = fade(local, 0.2, 1.4) * (1 - fade(local, 6.0, 7.0));
+      text(ctx, '差距不在某一天', W / 2, H / 2 - 50, 76, PALETTE.ink, a, FONT_SERIF, 10);
+      text(ctx, '在每一天', W / 2, H / 2 + 60, 76, PALETTE.gold, a * fade(local, 1.4, 2.6), FONT_SERIF, 10);
+    },
+  },
+];
+
+/* ============================================================
+ * 引擎（一般不用改）
+ * ============================================================ */
+const DURATION = Math.max(...SHOTS.map(s => s.end));
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+function clamp(x, a = 0, b = 1) { return Math.min(b, Math.max(a, x)); }
+function fade(x, a, b) { return clamp((x - a) / (b - a)); }               // a→b 之间 0→1
+function ease(x) { return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; }
+function rng(seed) {                                                        // 确定性随机数：同一帧永远同一结果
+  return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let r = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    r = r + Math.imul(r ^ r >>> 7, 61 | r) ^ r; return ((r ^ r >>> 14) >>> 0) / 4294967296; };
+}
+function text(ctx, s, x, y, size, color, alpha = 1, font = FONT_SANS, spacing = 0) {
+  if (alpha <= 0) return;
+  ctx.save(); ctx.globalAlpha = alpha; ctx.fillStyle = color;
+  ctx.font = `${size}px ${font}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if ('letterSpacing' in ctx) ctx.letterSpacing = `${spacing}px`;
+  ctx.fillText(s, x, y); ctx.restore();
+}
+function glowDot(ctx, x, y, r, color, alpha = 1) {
+  if (alpha <= 0) return;
+  ctx.save(); ctx.globalAlpha = alpha; ctx.shadowColor = color; ctx.shadowBlur = r * 6;
+  ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+}
+function drawSubtitle(t) {
+  const s = SUBS.find(s => t >= s.start && t < s.end);
+  if (!s) return;
+  const a = fade(t, s.start, s.start + 0.25) * (1 - fade(t, s.end - 0.25, s.end));
+  text(ctx, s.zh, W / 2, H - 120, 44, PALETTE.ink, a, FONT_SANS, 2);
+  text(ctx, s.en, W / 2, H - 66, 24, PALETTE.dim, a, FONT_SANS);
+}
+function filmLook(t) {                                                       // 暗角 + 胶片颗粒，统一“电影感”
+  const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.9);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.65)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  const r = rng(Math.floor(t * FPS) + 1);
+  ctx.fillStyle = 'rgba(255,255,255,0.035)';
+  for (let i = 0; i < 1400; i++) ctx.fillRect(r() * W, r() * H, 1.5, 1.5);
+}
+function renderFrame(t) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1; ctx.fillStyle = PALETTE.bg; ctx.fillRect(0, 0, W, H);
+  for (const s of SHOTS) if (t >= s.start && t < s.end) s.draw(ctx, fade(t, s.start, s.end), t, t - s.start);
+  if (BURN_IN_SUBS) drawSubtitle(t);
+  filmLook(t);
+}
+
+// 供 render.mjs 调用
+window.__vibe = { W, H, FPS, DURATION, SUBS, SHOTS: SHOTS.map(({ start, end }) => ({ start, end })), renderFrame };
+
+// 预览模式
+if (new URLSearchParams(location.search).has('render')) {
+  document.body.classList.add('render');
+  renderFrame(0);
+} else {
+  const hud = document.getElementById('hud');
+  let playing = true, t = 0, last = performance.now();
+  addEventListener('keydown', e => {
+    if (e.code === 'Space') playing = !playing;
+    if (e.code === 'ArrowRight') t = Math.min(DURATION, t + 1);
+    if (e.code === 'ArrowLeft') t = Math.max(0, t - 1);
+    if (e.code === 'Home') t = 0;
+  });
+  (function loop(now) {
+    if (playing) t += (now - last) / 1000;
+    if (t >= DURATION) t = 0;
+    last = now;
+    renderFrame(t); if (!BURN_IN_SUBS) drawSubtitle(t);  // 预览时总是显示字幕方便对稿
+    hud.textContent = `${t.toFixed(2)}s / ${DURATION}s   [空格] 播放/暂停  [← →] ±1s`;
+    requestAnimationFrame(loop);
+  })(performance.now());
+}
+</script>
+</body>
+</html>
